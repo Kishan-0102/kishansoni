@@ -1,0 +1,76 @@
+#include <stdio.h>
+#include <string.h>
+#include <esp_log.h>
+#include <esp_system.h>
+#include <esp_event.h>
+#include <nvs_flash.h>
+#include <esp_wifi.h>
+#include <esp_http_client.h>
+#include <esp_spiffs.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <sys/stat.h>
+
+#define TAG "HTTPS_DOWNLOADER"
+#define FILE_PATH "/spiffs/downloaded_file"
+#define BUFFER_SIZE 4096
+
+const char *download_url = "https://example.com/samplefile.bin";
+
+esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
+    switch (evt->event_id) {
+        case HTTP_EVENT_ERROR:
+            ESP_LOGE(TAG, "HTTP_EVENT_ERROR");
+            break;
+        case HTTP_EVENT_ON_DATA:
+            if (evt->data_len > 0) {
+                FILE *f = fopen(FILE_PATH, "ab");
+                if (f) {
+                    fwrite(evt->data, 1, evt->data_len, f);
+                    fclose(f);
+                } else {
+                    ESP_LOGE(TAG, "Failed to open file for writing");
+                    return ESP_FAIL;
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+
+void download_file() {
+    esp_http_client_config_t config = {
+        .url = download_url,
+        .event_handler = _http_event_handler,
+        .buffer_size = BUFFER_SIZE,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t err = esp_http_client_perform(client);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "File downloaded successfully");
+    } else {
+        ESP_LOGE(TAG, "Download failed: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+}
+
+void app_main() {
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = "/spiffs",
+        .partition_label = NULL,
+        .max_files = 5,
+        .format_if_mount_failed = true
+    };
+    ESP_ERROR_CHECK(esp_vfs_spiffs_register(&conf));
+
+    download_file();
+}
